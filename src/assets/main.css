@@ -1,0 +1,49 @@
+/* ==========================================================
+   Estilos globales de la aplicación.
+   ========================================================== */
+
+:root {
+  --app-bg: #f1f5f9;
+  --app-text: #0f172a;
+  --app-muted: #64748b;
+  --app-primary: #2563eb;
+  --app-border: #e2e8f0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  background: var(--app-bg);
+  color: var(--app-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--app-primary);
+  text-decoration: none;
+}
+
+/* Utilidad rápida para cards / contenedores */
+.card {
+  background: #fff;
+  border: 1px solid var(--app-border);
+  border-radius: 12px;
+  padding: 1.25rem;
+}
+
+/* Pequeños ajustes para que PrimeVue encaje mejor con el layout */
+.p-datatable .p-datatable-thead > tr > th {
+  background: #f8fafc;
+  color: #334155;
+  font-weight: 600;
+}
