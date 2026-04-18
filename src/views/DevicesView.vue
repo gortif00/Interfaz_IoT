@@ -6,7 +6,7 @@
  * - Permite crear, editar y eliminar dispositivos.
  * - Para actuadores oculta el botón de "Lecturas" (no tienen lecturas).
  */
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 /*importamos welcomecard para mostrar un mensaje de bienvenida en la vista de dispositivos, es un componente que hemos creado nosotros mismos para el dashboard pero que podemos reutilizar en cualquier parte de la aplicación */
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
@@ -18,6 +18,7 @@ import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Button from 'primevue/button'
 import ProgressSpinner from 'primevue/progressspinner'
+import Tag from 'primevue/tag'
 
 const devicesStore = useDevicesStore()
 const toast = useToast()
@@ -28,6 +29,9 @@ const router = useRouter()
 const dialogVisible = ref(false)
 const dialogLoading = ref(false)
 const selectedDevice = ref(null) // null = crear, objeto = editar
+const fallbackToastShown = ref(false)
+
+let refreshInterval
 
 function openCreate() {
   selectedDevice.value = null
@@ -44,16 +48,17 @@ function openReadings(device) {
   router.push({ name: 'device-readings', params: { id } })
 }
 
-async function loadDevices() {
+async function loadDevices({ silent = false } = {}) {
   await devicesStore.fetchAll()
-  if (devicesStore.error) {
+  if (devicesStore.error && !silent) {
     toast.add({
       severity: 'error',
       summary: 'Error al cargar dispositivos',
       detail: devicesStore.error,
       life: 4000
     })
-  } else if (devicesStore.usingFallback) {
+  } else if (devicesStore.usingFallback && !fallbackToastShown.value && !silent) {
+    fallbackToastShown.value = true
     toast.add({
       severity: 'info',
       summary: 'Mostrando todos los dispositivos',
@@ -131,7 +136,33 @@ function isActuator(device) {
   return t.includes('actuador') || t.includes('actuator')
 }
 
-onMounted(loadDevices)
+function statusSeverity(device) {
+  return device?.status === 'online' ? 'success' : 'secondary'
+}
+
+function statusLabel(device) {
+  return device?.status === 'online' ? 'Online' : 'Offline'
+}
+
+function formatLastSeen(value) {
+  if (!value) return 'Sin datos'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Sin datos'
+  return date.toLocaleString('es-ES')
+}
+
+onMounted(async () => {
+  await loadDevices()
+  refreshInterval = window.setInterval(() => {
+    loadDevices({ silent: true })
+  }, 30000)
+})
+
+onUnmounted(() => {
+  if (refreshInterval) {
+    window.clearInterval(refreshInterval)
+  }
+})
 </script>
 
 <template>
@@ -184,6 +215,17 @@ onMounted(loadDevices)
         <Column field="name" header="Nombre" />
         <Column field="type" header="Tipo" />
         <Column field="location" header="Ubicación" />
+        <Column field="deviceId" header="deviceId" />
+        <Column header="Estado" style="width: 120px">
+          <template #body="{ data }">
+            <Tag :value="statusLabel(data)" :severity="statusSeverity(data)" rounded />
+          </template>
+        </Column>
+        <Column header="Última conexión" style="min-width: 180px">
+          <template #body="{ data }">
+            {{ formatLastSeen(data.lastSeen) }}
+          </template>
+        </Column>
         <Column header="Acciones" style="width: 260px">
           <template #body="{ data }">
             <div class="row-actions">

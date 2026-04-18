@@ -3,19 +3,34 @@
  * SalonHumChartCard — Gráfica en tiempo real de humedad.
  * Se suscribe al topic MQTT y dibuja la línea con Chart.js (PrimeVue).
  */
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { mqttService } from '@/services/mqttService'
 import Card from 'primevue/card'
 import Chart from 'primevue/chart'
 import Tag from 'primevue/tag'
 import Skeleton from 'primevue/skeleton'
 
-const TOPIC = 'devices/salon/temperatura'
+const props = defineProps({
+  selectedDeviceId: { type: String, default: '' }
+})
+
+const LEGACY_TOPIC = import.meta.env.VITE_MQTT_HUM_TOPIC || 'devices/salon/humedad'
 const MAX_POINTS = 30
 
 const labels = ref([])
 const hums = ref([])
 const lastHum = ref(null)
+const hasSelectedTopicData = ref(false)
+
+const selectedReadingTopic = computed(() =>
+  props.selectedDeviceId ? `devices/${props.selectedDeviceId}/reading` : ''
+)
+const topicLabel = computed(() =>
+  selectedReadingTopic.value && hasSelectedTopicData.value
+    ? selectedReadingTopic.value
+    : LEGACY_TOPIC
+)
+const storageKey = computed(() => `dashboard.hum.history.${props.selectedDeviceId || 'legacy'}`)
 
 const hasData = computed(() => hums.value.length > 0)
 
@@ -74,26 +89,147 @@ const chartOptions = {
 }
 
 function handleMessage(topic, payload) {
-  if (topic !== TOPIC) return
-  try {
-    const data = JSON.parse(payload)
-    const now = new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  if (topic === selectedReadingTopic.value) {
+    const humidity = extractHumidity(payload, { readingTopic: true })
+    if (humidity == null) return
 
-    labels.value = [...labels.value, now].slice(-MAX_POINTS)
-    hums.value   = [...hums.value, data.humidity].slice(-MAX_POINTS)
-    lastHum.value = data.humidity
-  } catch (err) {
-    console.warn('[SalonHumChart] Error:', err.message)
+    hasSelectedTopicData.value = true
+    appendPoint(humidity)
+    return
   }
+
+  if (topic === LEGACY_TOPIC) {
+    if (selectedReadingTopic.value && hasSelectedTopicData.value) return
+
+    const humidity = extractHumidity(payload)
+    if (humidity == null) {
+      console.warn('[SalonHumChart] Payload invalido:', payload)
+      return
+    }
+
+    appendPoint(humidity)
+  }
+}
+
+function appendPoint(humidity) {
+  const now = new Date().toLocaleTimeString('es-ES', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  })
+
+  labels.value = [...labels.value, now].slice(-MAX_POINTS)
+  hums.value = [...hums.value, humidity].slice(-MAX_POINTS)
+  lastHum.value = humidity
+  saveHistory()
+}
+
+function extractHumidity(payload, { readingTopic = false } = {}) {
+  const raw = String(payload ?? '').trim()
+  if (!raw) return null
+
+  const parsed = parsePayload(raw)
+  if (parsed == null) return null
+
+  if (readingTopic) {
+    const value = Number(parsed?.humidity ?? parsed?.hum)
+    return Number.isFinite(value) ? value : null
+  }
+
+  const value = Number(parsed?.humidity ?? parsed?.hum ?? parsed?.value ?? parsed)
+  return Number.isFinite(value) ? value : null
+}
+
+function parsePayload(raw) {
+  try {
+    const data = JSON.parse(raw)
+    if (typeof data === 'number' && Number.isFinite(data)) {
+      return data
+    }
+
+    if (data && typeof data === 'object') {
+      return data
+    }
+  } catch {
+    // Soporta payload plano tipo "56.70"
+  }
+
+  const plainValue = Number(raw.replace(',', '.'))
+  return Number.isFinite(plainValue) ? plainValue : null
+}
+
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(storageKey.value)
+    if (!raw) return
+    const parsed = JSON.parse(raw)
+    const cachedLabels = Array.isArray(parsed?.labels) ? parsed.labels : []
+    const cachedHums = Array.isArray(parsed?.hums)
+      ? parsed.hums.map((value) => Number(value)).filter((value) => Number.isFinite(value))
+      : []
+
+    const size = Math.min(cachedLabels.length, cachedHums.length, MAX_POINTS)
+    if (size === 0) return
+
+    labels.value = cachedLabels.slice(-size)
+    hums.value = cachedHums.slice(-size)
+    lastHum.value = hums.value.at(-1) ?? null
+  } catch {
+    // Ignora cache corrupta
+  }
+}
+
+function saveHistory() {
+  try {
+    localStorage.setItem(
+      storageKey.value,
+      JSON.stringify({
+        labels: labels.value,
+        hums: hums.value
+      })
+    )
+  } catch {
+    // Ignora errores de cuota o acceso
+  }
+}
+
+function clearSeries() {
+  labels.value = []
+  hums.value = []
+  lastHum.value = null
 }
 
 let removeListener
 onMounted(() => {
-  mqttService.subscribe(TOPIC)
+  loadHistory()
+  mqttService.subscribe(LEGACY_TOPIC)
+  if (selectedReadingTopic.value) {
+    mqttService.subscribe(selectedReadingTopic.value)
+  }
   removeListener = mqttService.onMessage(handleMessage)
 })
+
+watch(
+  () => props.selectedDeviceId,
+  (newDeviceId, oldDeviceId) => {
+    hasSelectedTopicData.value = false
+
+    if (oldDeviceId) {
+      mqttService.unsubscribe(`devices/${oldDeviceId}/reading`)
+    }
+
+    clearSeries()
+    loadHistory()
+
+    if (newDeviceId) {
+      mqttService.subscribe(`devices/${newDeviceId}/reading`)
+    }
+  }
+)
+
 onUnmounted(() => {
-  mqttService.unsubscribe(TOPIC)
+  mqttService.unsubscribe(LEGACY_TOPIC)
+  if (selectedReadingTopic.value) {
+    mqttService.unsubscribe(selectedReadingTopic.value)
+  }
   removeListener?.()
 })
 </script>
@@ -114,7 +250,7 @@ onUnmounted(() => {
     <template #subtitle>
       <div class="chart-subtitle">
         <i class="pi pi-wifi"></i>
-        <code>{{ TOPIC }}</code>
+        <code>{{ topicLabel }}</code>
       </div>
     </template>
 

@@ -45,6 +45,7 @@ http.interceptors.response.use(
     // Normalizamos el mensaje de error para que las vistas lo muestren fácil
     const message =
       error.response?.data?.message ||
+      error.response?.data?.msg ||
       error.response?.data?.error ||
       error.message ||
       'Error de conexión con el servidor'

@@ -12,15 +12,18 @@ export const useDevicesStore = defineStore('devices', {
     items: [],
     loading: false,
     error: null,
-    usingFallback: false
+    usingFallback: false,
+    supportsMine: true
   }),
 
   getters: {
-    total: (state) => state.items.length,
+    total: (state) => (Array.isArray(state.items) ? state.items.length : 0),
     online: (state) =>
-      state.items.filter((d) => (d.status || '').toLowerCase() === 'online').length,
+      (Array.isArray(state.items) ? state.items : [])
+        .filter((d) => (d.status || '').toLowerCase() === 'online').length,
     offline: (state) =>
-      state.items.filter((d) => (d.status || '').toLowerCase() === 'offline').length
+      (Array.isArray(state.items) ? state.items : [])
+        .filter((d) => (d.status || '').toLowerCase() === 'offline').length
   },
 
   actions: {
@@ -28,10 +31,17 @@ export const useDevicesStore = defineStore('devices', {
       this.loading = true
       this.error = null
       this.usingFallback = false
+
       try {
-        this.items = await devicesService.mine()
-      } catch (err) {
-        // Si /devices/mine no está disponible, usamos /devices como fallback
+        if (this.supportsMine) {
+          try {
+            this.items = await devicesService.mine()
+            return
+          } catch {
+            this.supportsMine = false
+          }
+        }
+
         try {
           this.items = await devicesService.list()
           this.usingFallback = true
